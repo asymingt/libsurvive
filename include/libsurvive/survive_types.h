@@ -36,8 +36,13 @@ extern "C" {
 #define Point3_format FLT_format "\t" FLT_format "\t" FLT_format
 #define Quat_format FLT_format "\t" FLT_format "\t" FLT_format "\t" FLT_format
 #define SurvivePose_format Point3_format "\t" Quat_format
+#define SurviveVel_format Point3_format "\t" Point3_format
+#define LINMATH_QUAT_EXPAND(q) (q)[0], (q)[1], (q)[2], (q)[3]
+#define LINMATH_VEC3_EXPAND(p) (p)[0], (p)[1], (p)[2]
+#define SURVIVE_VELOCITY_EXPAND(v) LINMATH_VEC3_EXPAND((v).Pos), LINMATH_VEC3_EXPAND((v).EulerRot)
 #define SURVIVE_POSE_EXPAND(p) (p).Pos[0], (p).Pos[1], (p).Pos[2], (p).Rot[0], (p).Rot[1], (p).Rot[2], (p).Rot[3]
 typedef LinmathPose SurvivePose;
+typedef LinmathEulerPose SurviveVelocity;
 
 //Careful with this, you can't just add another one right now, would take minor changes in survive_data.c and the cal tools.
 //It will also require a recompile.  TODO: revisit this and correct the comment once fixed.
@@ -67,9 +72,9 @@ typedef void (*imu_process_func)( SurviveObject * so, int mask, FLT * accelgyro,
 typedef void (*angle_process_func)( SurviveObject * so, int sensor_id, int acode, survive_timecode timecode, FLT length, FLT angle, uint32_t lh);
 typedef void(*button_process_func)(SurviveObject * so, uint8_t eventType, uint8_t buttonId, uint8_t axis1Id, uint16_t axis1Val, uint8_t axis2Id, uint16_t axis2Val);
 typedef void (*pose_func)(SurviveObject *so, survive_timecode timecode, SurvivePose *pose);
-typedef void (*velocity_func)(SurviveObject *so, survive_timecode timecode, const SurvivePose *pose);
+typedef void (*velocity_func)(SurviveObject *so, survive_timecode timecode, const SurviveVelocity *pose);
 typedef void (*external_pose_func)(SurviveContext *so, const char *name, const SurvivePose *pose);
-typedef void (*external_velocity_func)(SurviveContext *so, const char *name, const SurvivePose *velocity);
+typedef void (*external_velocity_func)(SurviveContext *so, const char *name, const SurviveVelocity *velocity);
 typedef void (*lighthouse_pose_func)(SurviveContext *ctx, uint8_t lighthouse, SurvivePose *lighthouse_pose, SurvivePose *object_pose);
 
 // For lightcap, etc.  Don't change this structure at all.  Regular vive is dependent on it being exactly as-is.

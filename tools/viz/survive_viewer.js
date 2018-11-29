@@ -320,7 +320,7 @@ function update_velocity(v) {
 	var obj = {
 		tracker : v[1],
 		position : [ parseFloat(v[3]), parseFloat(v[4]), parseFloat(v[5]) ],
-		quat : [ parseFloat(v[6]), parseFloat(v[7]), parseFloat(v[8]), parseFloat(v[9]) ]
+		euler : [ parseFloat(v[6]), parseFloat(v[7]), parseFloat(v[8]) ]
 	};
 
 	if (objs[obj.tracker] == null || objs[obj.tracker].velocity == null) {
@@ -330,7 +330,7 @@ function update_velocity(v) {
 	objs[obj.tracker].velocity.geometry.vertices[1].set(obj.position[0], obj.position[1], obj.position[2]);
 	objs[obj.tracker].velocity.geometry.verticesNeedUpdate = true;
 
-	objs[obj.tracker].angVelocity.geometry.vertices[1].set(obj.quat[1], obj.quat[2], obj.quat[3]);
+	objs[obj.tracker].angVelocity.geometry.vertices[1].set(obj.euler[0], obj.euler[1], obj.euler[2]);
 	objs[obj.tracker].angVelocity.geometry.verticesNeedUpdate = true;
 }
 function update_object(v, allow_unsetup) {
@@ -382,8 +382,8 @@ function update_object(v, allow_unsetup) {
 			var up = new THREE.Vector3(0, 1, 0);
 			var out = new THREE.Vector3(0, 0, -1);
 
-			fpv_camera.up = up.applyQuaternion(objs[obj.tracker].quaternion);
-			var lookAt = out.applyQuaternion(objs[obj.tracker].quaternion);
+			fpv_camera.up = up.applyQuaternion(objs[obj.tracker].group_rot.quaternion);
+			var lookAt = out.applyQuaternion(objs[obj.tracker].group_rot.quaternion);
 			lookAt.add(objs[obj.tracker].position);
 
 			fpv_camera.position.set(obj.position[0], obj.position[1], obj.position[2]);

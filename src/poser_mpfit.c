@@ -16,7 +16,9 @@
 #include "survive_config.h"
 #include "survive_reproject.h"
 
+#ifndef _WIN32
 #define DEBUG_NAN
+#endif
 #ifdef DEBUG_NAN
 #include <fenv.h>
 #endif
@@ -232,7 +234,7 @@ static double run_mpfit_find_cameras(MPFITData *d, PoserDataFullScene *pdfs) {
 			pdfs->hdr = hdr;
 		} else {
 			SV_INFO("Not using a seed poser for MPFIT; results will likely be way off");
-			for (int i = 0; i < 2; i++) {
+			for (int i = 0; i < so->ctx->activeLighthouses; i++) {
 				so->ctx->bsd[i].Pose = (SurvivePose){0};
 				so->ctx->bsd[i].Pose.Rot[0] = 1.;
 			}
@@ -326,16 +328,16 @@ int PoserMPFIT(SurviveObject *so, PoserData *pd) {
 			d->last_acode = lightData->acode;
 
 			if (error > 0) {
-				if (d->useKalman) {
-					FLT var_meters = .01 + error;
-					FLT var_quat = .001 + error;
-					FLT var[2] = {var_meters, var_quat};
 
-					survive_imu_tracker_integrate_observation(lightData->timecode, &d->tracker, &estimate, var);
-					survive_imu_tracker_predict(&d->tracker, lightData->timecode, &estimate);
-					// SV_INFO("MPFIT VAR %f", var[0]);
-				}
-				SurvivePose vel = survive_imu_velocity(&d->tracker);
+				FLT var_meters = d->useKalman ? .01 + error : 0;
+				FLT var_quat = d->useKalman ? .01 + error : 0;
+				FLT var[2] = {var_meters, var_quat};
+
+				survive_imu_tracker_integrate_observation(lightData->timecode, &d->tracker, &estimate, var);
+				survive_imu_tracker_predict(&d->tracker, lightData->timecode, &estimate);
+				// SV_INFO("MPFIT VAR %f", var[0]);
+
+				SurviveVelocity vel = survive_imu_velocity(&d->tracker);
 				PoserData_poser_pose_func_with_velocity(&lightData->hdr, so, &estimate, &vel);
 			}
 		}
@@ -356,18 +358,18 @@ int PoserMPFIT(SurviveObject *so, PoserData *pd) {
 		} else if (d->useIMU) {
 			survive_imu_tracker_integrate_imu(&d->tracker, imu);
 
-			SurvivePose out = {};
+			SurvivePose out = { 0 };
 			survive_imu_tracker_predict(&d->tracker, imu->timecode, &out);
 			if (!quatiszero(out.Rot)) {
-				SurvivePose vel = survive_imu_velocity(&d->tracker);
+				SurviveVelocity vel = survive_imu_velocity(&d->tracker);
 				PoserData_poser_pose_func_with_velocity(pd, so, &out, &vel);
 			}
 			// SV_INFO("%+.07f %+.07f %+.07f", imu->gyro[0], imu->gyro[1], imu->gyro[2]);
 		} else if (d->useKalman) {
-			SurvivePose out = {};
+			SurvivePose out = { 0 };
 			survive_imu_tracker_predict(&d->tracker, imu->timecode, &out);
 			if (!quatiszero(out.Rot)) {
-				SurvivePose vel = survive_imu_velocity(&d->tracker);
+				SurviveVelocity vel = survive_imu_velocity(&d->tracker);
 				PoserData_poser_pose_func_with_velocity(pd, so, &out, &vel);
 			}
 		}

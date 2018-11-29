@@ -12,7 +12,7 @@
 #include <survive.h>
 #include <survive_reproject.h>
 
-STATIC_CONFIG_ITEM(Simulator_DRIVER_ENABLE, "use-simulator", 'i', "Load a Simulator driver for testing.", 0);
+STATIC_CONFIG_ITEM(Simulator_DRIVER_ENABLE, "simulator", 'i', "Load a Simulator driver for testing.", 0);
 STATIC_CONFIG_ITEM(Simulator_TIME, "simulator-time", 'f', "Seconds to run simulator for.", 0.0);
 
 struct SurviveDriverSimulator {
@@ -20,7 +20,7 @@ struct SurviveDriverSimulator {
 	SurviveObject *so;
 
 	SurvivePose position;
-	SurvivePose velocity;
+	SurviveVelocity velocity;
 
 	FLT time_last_imu;
 	FLT time_last_light;
@@ -49,7 +49,7 @@ static int Simulator_poll(struct SurviveContext *ctx, void *_driver) {
 	FLT timestep = 0.001;
 
 	if (last_time != 0 && last_time + timefactor * timestep > realtime) {
-		usleep((timefactor * timestep + realtime - last_time) * 1e6);
+		OGUSleep((timefactor * timestep + realtime - last_time) * 1e6);
 	}
 	last_time = realtime;
 
@@ -66,8 +66,8 @@ static int Simulator_poll(struct SurviveContext *ctx, void *_driver) {
 	// SurvivePose accel = {.Pos = {cos(t * 3) * 4, cos(t * 2) * 3, cos(t * 4) * 2},
 	//					 .Rot = {10 + cos(t) * 2, cos(t), sin(t), (cos(t) + sin(t))}};
 
-	SurvivePose accel = {.Rot = {5 + cos(t) * 2, cos(t), sin(t), (cos(t) + sin(t))}};
-	// SurvivePose accel = {.Rot = 1};
+	// SurviveVelocity accel = {.EulerRot = {cos(t), sin(t), (cos(t) + sin(t))}};
+	SurviveVelocity accel = {};
 
 	LinmathVec3d attractors[] = {{1, 1, 1}, {-1, 0, 1}, {0, -1, .5}};
 	size_t attractor_cnt = survive_configi(ctx, "attractors", SC_GET, sizeof(attractors) / sizeof(LinmathVec3d));
@@ -85,7 +85,6 @@ static int Simulator_poll(struct SurviveContext *ctx, void *_driver) {
 
 	// scale3d(accel.Pos, accel.Pos, 0);
 	// scale3d(accel.Rot + 1, accel.Rot + 1, 0);
-	quatnormalize(accel.Rot, accel.Rot);
 	// quatrotatevector(accel.Pos, accel.Rot, accel.Pos);
 	survive_timecode timecode = (survive_timecode)round(timestamp * 48000000.);
 
@@ -104,9 +103,7 @@ static int Simulator_poll(struct SurviveContext *ctx, void *_driver) {
 			quatgetconjugate(q, driver->position.Rot);
 			quatrotatevector(accelgyro, q, accelgyro);
 
-			LinmathQuat rotVel;
-			quatconjugateby(rotVel, q, driver->velocity.Rot);
-			quattoeuler(accelgyro + 3, rotVel);
+			quatrotatevector(accelgyro + 3, q, driver->velocity.EulerRot);
 		}
 
 		ctx->imuproc(driver->so, 3, accelgyro, timecode, 0);
@@ -139,7 +136,8 @@ static int Simulator_poll(struct SurviveContext *ctx, void *_driver) {
 				FLT facingness = dot3d(normalInLh, dirLh);
 				if (facingness > 0) {
 					survive_reproject_xy(ctx->bsd[lh].fcal, ptInLh, ang);
-
+					ang[0] += .001 * rand() / RAND_MAX;
+					ang[1] += .001 * rand() / RAND_MAX;
 					// SurviveObject * so, int sensor_id, int acode, survive_timecode timecode, FLT length, FLT angle,
 					// uint32_t lh);
 					int acode = (lh << 2) + (driver->acode & 1);
@@ -170,19 +168,21 @@ static int Simulator_poll(struct SurviveContext *ctx, void *_driver) {
 	driver->time_last_iterate = timestamp;
 
 	if (!isIniting) {
-		SurvivePose velGain;
+		SurviveVelocity velGain;
 		scale3d(velGain.Pos, accel.Pos, time_diff);
-		quatmultiplyrotation(velGain.Rot, accel.Rot, time_diff);
+		scale3d(velGain.EulerRot, accel.EulerRot, time_diff);
 
 		add3d(driver->velocity.Pos, driver->velocity.Pos, velGain.Pos);
-		quatrotateabout(driver->velocity.Rot, velGain.Rot, driver->velocity.Rot);
+		add3d(driver->velocity.EulerRot, velGain.EulerRot, driver->velocity.EulerRot);
 
-		SurvivePose posGain;
+		SurviveVelocity posGain;
 		scale3d(posGain.Pos, driver->velocity.Pos, time_diff);
-		quatmultiplyrotation(posGain.Rot, driver->velocity.Rot, time_diff);
+		scale3d(posGain.EulerRot, driver->velocity.EulerRot, time_diff);
 
 		add3d(driver->position.Pos, driver->position.Pos, posGain.Pos);
-		quatrotateabout(driver->position.Rot, posGain.Rot, driver->position.Rot);
+		LinmathQuat r;
+		quatfromeuler(r, posGain.EulerRot);
+		quatrotateabout(driver->position.Rot, r, driver->position.Rot);
 	}
 
 	FLT time = survive_configf(ctx, "simulator-time", SC_GET, 0);
@@ -202,15 +202,24 @@ void str_append(char **pString, const char *str) {
 	strcat(*pString, str);
 }
 
-int DriverRegSimulator(SurviveContext *ctx) {
-	int enable = survive_configi(ctx, "use-simulator", SC_GET, 1);
-	if (!enable)
-		return 0;
+const BaseStationData simulated_bsd[2] = {
+	{
+		.PositionSet = 1,
+		.BaseStationID = 0,
+		.Pose = {.Pos = {-3, 0, 1},.Rot = { -0.70710678118, 0, 0.70710678118, 0 } }
+	},
+	{
+		.PositionSet = 1,
+		.BaseStationID = 1,
+		.Pose = { .Pos = { 3, 0, 1 }, .Rot = { 0.70710678118, 0, 0.70710678118, 0 } }
+	},
+};
 
+int DriverRegSimulator(SurviveContext *ctx) {
 	SurviveDriverSimulator *sp = calloc(1, sizeof(SurviveDriverSimulator));
 	sp->ctx = ctx;
 
-	sp->position.Rot[0] = sp->velocity.Rot[0] = 1;
+	sp->position.Rot[0] = 1;
 
 	SV_INFO("Setting up Simulator driver.");
 
@@ -238,16 +247,23 @@ int DriverRegSimulator(SurviveContext *ctx) {
 	if (attractor_cnt) {
 		for (int i = 0; i < 3; i++)
 			sp->velocity.Pos[i] = 2. * rand() / RAND_MAX - 1.;
-	}
 
-	sp->velocity.Rot[0] = 1;
-	sp->velocity.Rot[3] = 1;
-	quatnormalize(sp->velocity.Rot, sp->velocity.Rot);
+		sp->velocity.EulerRot[0] = .5;
+		sp->velocity.EulerRot[1] = .5;
+		sp->velocity.EulerRot[2] = .5;
+	}
 
 	char *cfg = 0, *loc_buf = 0, *nor_buf = 0;
 
 	FLT r = .1;
 	srand(42);
+	
+	for (int i = 0; i < ctx->activeLighthouses; i++) {
+		if (!ctx->bsd[i].PositionSet) {
+			memcpy(ctx->bsd + i, simulated_bsd + i, sizeof(simulated_bsd[i]));
+		}
+	}
+
 	for (int i = 0; i < device->sensor_ct; i++) {
 		FLT azi = rand();
 		FLT pol = rand();
@@ -258,7 +274,7 @@ int DriverRegSimulator(SurviveContext *ctx) {
 		normals[2] = locations[2] = r * cos(pol);
 		normalize3d(normals, normals);
 
-		char buffer[1024] = {};
+		char buffer[1024] = { 0 };
 		sprintf(buffer, "[%f, %f, %f],\n", locations[0], locations[1], locations[2]);
 		str_append(&loc_buf, buffer);
 

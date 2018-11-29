@@ -41,6 +41,16 @@ struct kalman_info_position_t {
 	LinmathVec3d v;
 };
 
+struct kalman_info_euler_t {
+	struct kalman_info_t info;
+	LinmathEulerAngle v;
+};
+
+typedef struct kalman_info_pose_euler_t {
+	struct kalman_info_position_t Pos;
+	struct kalman_info_euler_t EulerRot;
+} kalman_info_pose_euler_t;
+
 typedef struct kalman_info_pose_t {
 	struct kalman_info_position_t Pos;
 	struct kalman_info_rotation_t Rot;
@@ -48,18 +58,20 @@ typedef struct kalman_info_pose_t {
 
 typedef struct SurviveIMUTracker {
 	SurviveObject *so;
-	bool is_initialized;
+	int use_obs_velocity;
+	FLT obs_variance;
+	FLT obs_rot_variance;
 
 	FLT acc_var;
 	FLT gyro_var;
 
 	LinmathVec3d last_acc;
-	LinmathVec3d updir;
 	FLT accel_scale_bias;
+	FLT mahony_variance;
 
 	kalman_info_pose_t pose;
 	kalman_info_pose_t last_pose;
-	kalman_info_pose_t velocity;
+	kalman_info_pose_euler_t velocity;
 
 	// SurvivePose current_velocity; // Velocity in world frame
 	// SurvivePoseVariance Pv;
@@ -70,13 +82,13 @@ typedef struct SurviveIMUTracker {
 
 } SurviveIMUTracker;
 
-SURVIVE_EXPORT SurvivePose survive_imu_velocity(const SurviveIMUTracker *tracker);
+SURVIVE_EXPORT SurviveVelocity survive_imu_velocity(const SurviveIMUTracker *tracker);
 SURVIVE_EXPORT void survive_imu_tracker_predict(const SurviveIMUTracker *tracker, survive_timecode timecode,
 												SurvivePose *out);
 SURVIVE_EXPORT FLT survive_imu_tracker_predict_velocity_pos(const SurviveIMUTracker *tracker, survive_timecode timecode,
 															LinmathVec3d out);
 SURVIVE_EXPORT FLT survive_imu_tracker_predict_velocity_rot(const SurviveIMUTracker *tracker, survive_timecode timecode,
-															LinmathQuat out);
+															LinmathEulerAngle out);
 SURVIVE_EXPORT FLT survive_imu_tracker_predict_pos(const SurviveIMUTracker *tracker, survive_timecode timecode,
 												   LinmathVec3d out);
 SURVIVE_EXPORT FLT survive_imu_tracker_predict_rot(const SurviveIMUTracker *tracker, survive_timecode timecode,
