@@ -5,6 +5,7 @@
 #undef WCHAR_MAX
 #endif
 #include <hidapi.h>
+#define HID_NONBLOCKING
 #else
 #ifdef __FreeBSD__
 #include <libusb.h>
@@ -13,7 +14,9 @@
 #endif
 #endif
 
-enum {
+#define MAX_USB_DEVS 32
+
+enum USB_DEV_t {
 	USB_DEV_HMD = 0,
 	USB_DEV_HMD_IMU_LH,
 	USB_DEV_WATCHMAN1,
@@ -21,30 +24,19 @@ enum {
 	USB_DEV_TRACKER0,
 	USB_DEV_TRACKER1,
 	USB_DEV_W_WATCHMAN1, // Wired Watchman attached via USB
-#ifdef HIDAPI
-	USB_DEV_HMD_IMU_LHB,
-	USB_DEV_TRACKER0_LIGHTCAP,
-	USB_DEV_TRACKER1_LIGHTCAP,
-	USB_DEV_W_WATCHMAN1_LIGHTCAP,
-
-	USB_DEV_HMD_BUTTONS,
-	USB_DEV_TRACKER0_BUTTONS,
-	USB_DEV_TRACKER1_BUTTONS,
-	USB_DEV_W_WATCHMAN1_BUTTONS,
-#endif
-	MAX_USB_DEVS
 };
 
-enum {
-	USB_IF_HMD = 0,
-	USB_IF_HMD_IMU_LH,
+#define MAX_INTERFACES_PER_DEVICE 8
+enum USB_IF_t {
+	USB_IF_HMD_HEADSET_INFO = 0,
+	USB_IF_HMD_IMU,
 	USB_IF_WATCHMAN1,
 	USB_IF_WATCHMAN2,
-	USB_IF_TRACKER0,
-	USB_IF_TRACKER1,
-	USB_IF_W_WATCHMAN1,
+	USB_IF_TRACKER0_IMU,
+	USB_IF_TRACKER1_IMU,
+	USB_IF_W_WATCHMAN1_IMU,
 
-	USB_IF_LIGHTCAP,
+	USB_IF_HMD_LIGHTCAP,
 	USB_IF_TRACKER0_LIGHTCAP,
 	USB_IF_TRACKER1_LIGHTCAP,
 	USB_IF_W_WATCHMAN1_LIGHTCAP,
@@ -62,9 +54,14 @@ struct SurviveUSBInterface;
 
 typedef void (*usb_callback)(struct SurviveUSBInterface *ti);
 #ifdef HIDAPI
-#define USBHANDLE hid_device *
+struct HIDAPI_USB_Handle_t {
+	hid_device *interfaces[8];
+};
+#define USBHANDLE struct HIDAPI_USB_Handle_t *
+#define USB_INTERFACE_HANDLE hid_device *
 #else
 #define USBHANDLE libusb_device_handle *
+#define USB_INTERFACE_HANDLE void *
 #endif
 
 typedef struct SurviveUSBInterface {
@@ -72,7 +69,10 @@ typedef struct SurviveUSBInterface {
 	SurviveContext *ctx;
 
 #ifdef HIDAPI
-	USBHANDLE uh;
+	USB_INTERFACE_HANDLE uh;
+#ifndef HID_NONBLOCKING
+	og_thread_t servicethread;
+#endif
 #else
 	struct libusb_transfer *transfer;
 #endif
@@ -86,3 +86,6 @@ typedef struct SurviveUSBInterface {
 } SurviveUSBInterface;
 
 void survive_data_cb(SurviveUSBInterface *si);
+int parse_watchman_lightcap(struct SurviveContext *ctx, const char *codename, uint8_t time1,
+							survive_timecode reference_time, uint8_t *readdata, size_t qty, LightcapElement *les,
+							size_t output_cnt);

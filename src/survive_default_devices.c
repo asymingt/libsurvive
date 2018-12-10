@@ -25,6 +25,10 @@ SurviveObject *survive_create_device(SurviveContext *ctx, const char *driver_nam
 	device->imu2trackref.Rot[0] = 1.;
 	device->head2trackref.Rot[0] = 1.;
 
+	for (int i = 0; i < 3; i++) {
+		device->gyro_scale[i] = device->acc_scale[i] = 1.0;
+	}
+
 	return device;
 }
 
@@ -54,7 +58,7 @@ SurviveObject *survive_create_ww0(SurviveContext *ctx, const char *driver_name,
 	return survive_create_device(ctx, driver_name, driver, "WW0", 0);
 }
 
-static int jsoneq(const char *json, jsmntok_t *tok, const char *s) {
+static int jsoneq(const char *json, const jsmntok_t *tok, const char *s) {
 	if (tok && tok->type == JSMN_STRING && (int)strlen(s) == tok->end - tok->start &&
 		strncmp(json + tok->start, s, tok->end - tok->start) == 0) {
 		return 0;
@@ -62,10 +66,10 @@ static int jsoneq(const char *json, jsmntok_t *tok, const char *s) {
 	return -1;
 }
 
-static int ParsePoints(SurviveContext *ctx, SurviveObject *so, char *ct0conf, FLT **floats_out, jsmntok_t *t) {
+static int ParsePoints(SurviveContext *ctx, SurviveObject *so, char *ct0conf, FLT **floats_out, const jsmntok_t *t) {
 	int k;
 	int pts = t[1].size;
-	jsmntok_t *tk;
+	const jsmntok_t *tk;
 
 	so->sensor_ct = 0;
 	*floats_out = malloc(sizeof(**floats_out) * 32 * 3);
@@ -135,13 +139,43 @@ int solve_vive_pose(SurvivePose *pose, const vive_pose_t *vpose) {
 typedef struct {
 	SurviveObject *so;
 	vive_pose_t imu_pose;
+	vive_pose_t head;
 } scratch_space_t;
 
 static scratch_space_t scratch_space_init(SurviveObject *so) { return (scratch_space_t){.so = so}; }
 
+static bool parse_ctx_sensitive_vive_pose_t(char *ct0conf, stack_entry_t *stack, const char *field_name,
+											vive_pose_t *output) {
+	if (stack->previous && jsoneq(ct0conf, stack->previous->key, field_name) == 0) {
+		struct field {
+			const char *name;
+			FLT *vals;
+		};
+
+		struct field imufields[] = {
+			{"plus_x", output->plus_x}, {"plus_z", output->plus_z}, {"position", output->position}};
+
+		const jsmntok_t *tk = stack->key;
+		for (int i = 0; i < sizeof(imufields) / sizeof(struct field); i++) {
+			if (jsoneq(ct0conf, tk, imufields[i].name) == 0) {
+				int32_t count = (tk + 1)->size;
+				assert(count == 3);
+				if (count == 3) {
+					parse_float_array_in_place(ct0conf, tk + 2, imufields[i].vals, count);
+				}
+				break;
+			}
+		}
+
+		return true;
+	}
+
+	return false;
+}
+
 static int process_jsonarray(scratch_space_t *scratch, char *ct0conf, stack_entry_t *stack) {
 	SurviveObject *so = scratch->so;
-	jsmntok_t *tk = stack->key;
+	jsmntok_t const *const tk = stack->key;
 	SurviveContext *ctx = so->ctx;
 
 	/// CONTEXT FREE FIELDS
@@ -153,30 +187,46 @@ static int process_jsonarray(scratch_space_t *scratch, char *ct0conf, stack_entr
 		if (ParsePoints(ctx, so, ct0conf, &so->sensor_normals, tk)) {
 			return -1;
 		}
-	}
-	else if (jsoneq(ct0conf, tk, "acc_bias") == 0) {
+	} else if (jsoneq(ct0conf, tk, "channelMap") == 0) {
 		int32_t count = (tk + 1)->size;
-		FLT *values = NULL;
-		if (parse_float_array(ct0conf, tk + 2, &values, count) > 0) {
-			so->acc_bias = values;
+		int *values = NULL;
+		if (parse_int_array(ct0conf, tk + 2, &values, count)) {
+			int max_port = 0;
+			for (int i = 0; i < count; i++) {
+				max_port = max_port > values[i] ? max_port : values[i];
+			}
+
+			max_port++;
+			assert(max_port <= 32);
+			max_port = 32;
+			so->channel_map = malloc(sizeof(int) * max_port);
+			for (int i = 0; i < max_port; i++)
+				so->channel_map[i] = -1;
+
+			for (int i = 0; i < count; i++) {
+				so->channel_map[values[i]] = i;
+			}
+		}
+		free(values);
+	} else if (jsoneq(ct0conf, tk, "acc_bias") == 0) {
+		int32_t count = (tk + 1)->size;
+		if (parse_float_array_in_place(ct0conf, tk + 2, so->acc_bias, count) <= 0) {
+			SV_WARN("Could not parse acc_bias");
 		}
 	} else if (jsoneq(ct0conf, tk, "acc_scale") == 0) {
 		int32_t count = (tk + 1)->size;
-		FLT *values = NULL;
-		if (parse_float_array(ct0conf, tk + 2, &values, count) > 0) {
-			so->acc_scale = values;
+		if (parse_float_array_in_place(ct0conf, tk + 2, so->acc_scale, count) <= 0) {
+			SV_WARN("Could not parse acc_scale");
 		}
 	} else if (jsoneq(ct0conf, tk, "gyro_bias") == 0) {
 		int32_t count = (tk + 1)->size;
-		FLT *values = NULL;
-		if (parse_float_array(ct0conf, tk + 2, &values, count) > 0) {
-			so->gyro_bias = values;
+		if (parse_float_array_in_place(ct0conf, tk + 2, so->gyro_bias, count) <= 0) {
+			SV_WARN("Could not parse gyro_bias");
 		}
 	} else if (jsoneq(ct0conf, tk, "gyro_scale") == 0) {
 		int32_t count = (tk + 1)->size;
-		FLT *values = NULL;
-		if (parse_float_array(ct0conf, tk + 2, &values, count) > 0) {
-			so->gyro_scale = values;
+		if (parse_float_array_in_place(ct0conf, tk + 2, so->gyro_scale, count) <= 0) {
+			SV_WARN("Could not parse gyro_scale");
 		}
 	} else if (jsoneq(ct0conf, tk, "trackref_from_imu") == 0) {
 		int32_t count = (tk + 1)->size;
@@ -199,27 +249,9 @@ static int process_jsonarray(scratch_space_t *scratch, char *ct0conf, stack_entr
 	}
 
 	/// Context sensitive fields
-	else if (stack->previous && jsoneq(ct0conf, stack->previous->key, "imu") == 0) {
-
-		struct field {
-			const char *name;
-			FLT *vals;
-		};
-
-		struct field imufields[] = {{"plus_x", scratch->imu_pose.plus_x},
-									{"plus_z", scratch->imu_pose.plus_z},
-									{"position", scratch->imu_pose.position}};
-
-		for (int i = 0; i < sizeof(imufields) / sizeof(struct field); i++) {
-			if (jsoneq(ct0conf, tk, imufields[i].name) == 0) {
-				int32_t count = (tk + 1)->size;
-				assert(count == 3);
-				if (count == 3) {
-					parse_float_array_in_place(ct0conf, tk + 2, imufields[i].vals, count);
-				}
-				break;
-			}
-		}
+	else {
+		parse_ctx_sensitive_vive_pose_t(ct0conf, stack, "imu", &scratch->imu_pose);
+		parse_ctx_sensitive_vive_pose_t(ct0conf, stack, "head", &scratch->head);
 	}
 
 	return 0;
@@ -282,6 +314,7 @@ int survive_load_htc_config_format(SurviveObject *so, char *ct0conf, int len) {
 	process_jsontok(&scratch, ct0conf, 0, t, r);
 
 	solve_vive_pose(&so->imu2trackref, &scratch.imu_pose);
+	solve_vive_pose(&so->head2trackref, &scratch.head);
 
 	SurvivePose trackref2imu = InvertPoseRtn(&so->imu2trackref);
 
@@ -294,27 +327,20 @@ int survive_load_htc_config_format(SurviveObject *so, char *ct0conf, int len) {
 
 	// Handle device-specific sacling.
 	if (strcmp(so->codename, "HMD") == 0) {
-		if (so->acc_scale) {
-			scale3d(so->acc_scale, so->acc_scale, 1. / 8192.0);
-		}
-		if (so->acc_bias)
-			scale3d(so->acc_bias, so->acc_bias, 1000.0 ); // Odd but seems right.
+		scale3d(so->acc_scale, so->acc_scale, 1. / 8192.0);
+		scale3d(so->acc_bias, so->acc_bias, 1. / 1000.0); // Odd but seems right.
 
 		so->imu_freq = HMD_IMU_HZ;
 
-		if (so->gyro_scale) {
-			FLT deg_per_sec = 500;
-			scale3d(so->gyro_scale, so->gyro_scale, deg_per_sec / (1 << 15) * LINMATHPI / 180.);
-		}
+		FLT deg_per_sec = 500;
+		scale3d(so->gyro_scale, so->gyro_scale, deg_per_sec / (1 << 15) * LINMATHPI / 180.);
 	} else if (memcmp(so->codename, "WM", 2) == 0) {
-		if (so->acc_scale)
-			scale3d(so->acc_scale, so->acc_scale, 2. / 8192.0);
-		if (so->acc_bias)
-			scale3d(so->acc_bias, so->acc_bias, 1000.); // Need to verify.
+		scale3d(so->acc_scale, so->acc_scale, 2. / 8192.0);
+		scale3d(so->acc_bias, so->acc_bias, 1. / 1000.); // Need to verify.
 
 		FLT deg_per_sec = 2000;
-		if (so->gyro_scale)
-			scale3d(so->gyro_scale, so->gyro_scale, deg_per_sec / (1 << 15) * LINMATHPI / 180.);
+		scale3d(so->gyro_scale, so->gyro_scale, deg_per_sec / (1 << 15) * LINMATHPI / 180.);
+
 		int j;
 		for (j = 0; j < so->sensor_ct; j++) {
 			so->sensor_locations[j * 3 + 0] *= 1.0;
@@ -325,18 +351,15 @@ int survive_load_htc_config_format(SurviveObject *so, char *ct0conf, int len) {
 		// 1G for accelerometer, from MPU6500 datasheet
 		// this can change if the firmware changes the sensitivity.
 		// When coming off of USB, these values are in units of .5g -JB
-		if (so->acc_scale)
-			scale3d(so->acc_scale, so->acc_scale, 2. / 8192.0);
+		scale3d(so->acc_scale, so->acc_scale, 2. / 8192.0);
 
 		// If any other device, we know we at least need this.
 		// I deeply suspect bias is in milligravities -JB
-		if (so->acc_bias)
-			scale3d(so->acc_bias, so->acc_bias, 1000.);
+		scale3d(so->acc_bias, so->acc_bias, 1. / 1000.);
 
 		// From datasheet, can be 250, 500, 1000, 2000 deg/s range over 16 bits
 		FLT deg_per_sec = 2000;
-		if (so->gyro_scale)
-			scale3d(so->gyro_scale, so->gyro_scale, deg_per_sec / (1 << 15) * LINMATHPI / 180.);
+		scale3d(so->gyro_scale, so->gyro_scale, deg_per_sec / (1 << 15) * LINMATHPI / 180.);
 		// scale3d(so->gyro_scale, so->gyro_scale, 3.14159 / 1800. / 1.8);
 	}
 

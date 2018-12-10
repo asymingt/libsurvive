@@ -399,7 +399,7 @@ int survive_startup(SurviveContext *ctx) {
 	ctx->buttonservicethread = OGCreateThread(button_servicer, ctx);
 
 	PoserCB PreferredPoserCB = GetDriverByConfig(ctx, "Poser", "defaultposer", "MPFIT");
-	ctx->lightcapfunction = GetDriverByConfig(ctx, "Disambiguator", "disambiguator", "Turvey");
+	ctx->lightcapfunction = GetDriverByConfig(ctx, "Disambiguator", "disambiguator", "StateBased");
 
 	const char *DriverName;
 
@@ -599,6 +599,7 @@ void survive_remove_object(SurviveContext *ctx, SurviveObject *obj) {
 	// past the end of the list
 	ctx->objs[ctx->objs_ct] = 0;
 
+	SV_INFO("Removing tracked object %s from %s", obj->codename, obj->drivername);
 	free(obj);
 }
 void survive_add_driver(SurviveContext *ctx, void *payload, DeviceDriverCb poll, DeviceDriverCb close,

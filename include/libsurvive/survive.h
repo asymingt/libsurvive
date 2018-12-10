@@ -27,6 +27,7 @@ typedef struct SurviveSensorActivations_s {
 	survive_timecode timecode[SENSORS_PER_OBJECT][NUM_LIGHTHOUSES][2]; // Timecode per axis in ticks
 	survive_timecode lengths[SENSORS_PER_OBJECT][NUM_LIGHTHOUSES][2];  // Timecode per axis in ticks
 
+	survive_timecode last_imu;
 	FLT accel[3];
 	FLT gyro[3];
 	FLT mag[3];
@@ -96,6 +97,7 @@ struct SurviveObject {
 	// These are stored in the IMU's coordinate frame so that posers don't have to do a ton of manipulation
 	// to do sensor fusion.
 	int8_t sensor_ct;	  // sensor count
+	int *channel_map;
 	FLT *sensor_locations; // size is sensor_ct*3.  Contains x,y,z values for each sensor
 	FLT *sensor_normals;   // size is nrlocations*3.  cointains normal vector for each sensor
 
@@ -124,10 +126,10 @@ struct SurviveObject {
 	SurvivePose imu2trackref;
 	SurvivePose head2imu;
 
-	FLT *acc_bias;   // size is FLT*3. contains x,y,z
-	FLT *acc_scale;  // size is FLT*3. contains x,y,z
-	FLT *gyro_bias;  // size is FLT*3. contains x,y,z
-	FLT *gyro_scale; // size is FLT*3. contains x,y,z
+	FLT acc_bias[3];   // size is FLT*3. contains x,y,z
+	FLT acc_scale[3];  // size is FLT*3. contains x,y,z
+	FLT gyro_bias[3];  // size is FLT*3. contains x,y,z
+	FLT gyro_scale[3]; // size is FLT*3. contains x,y,z
 
 	haptic_func haptic;
 
@@ -232,6 +234,7 @@ struct SurviveContext {
 	int activeLighthouses;
 	BaseStationData bsd[NUM_LIGHTHOUSES];
 	SurviveCalData *calptr;				 // If and only if the calibration subsystem is attached.
+	void *disambiguator_data;			 // global disambiguator data
 	struct SurviveRecordingData *recptr; // Iff recording is attached
 	SurviveObject **objs;
 	int objs_ct;
@@ -371,24 +374,29 @@ SURVIVE_EXPORT void survive_add_driver(SurviveContext *ctx, void *payload, Devic
 // This is the disambiguator function, for taking light timing and figuring out place-in-sweep for a given photodiode.
 SURVIVE_EXPORT void handle_lightcap(SurviveObject *so, LightcapElement *le);
 
+#define SV_LOG_NULL_GUARD                                                                                              \
+	if (ctx == 0) {                                                                                                    \
+		fprintf(stderr, "Logging: %s\n", stbuff);                                                                      \
+	} else
+
 #define SV_WARN(...)                                                                                                   \
 	{                                                                                                                  \
 		char stbuff[1024];                                                                                             \
 		sprintf(stbuff, __VA_ARGS__);                                                                                  \
-		ctx->warnfunction(ctx, stbuff);                                                                                \
+		SV_LOG_NULL_GUARD ctx->warnfunction(ctx, stbuff);                                                              \
 	}
 
 #define SV_INFO(...)                                                                                                   \
 	{                                                                                                                  \
 		char stbuff[1024];                                                                                             \
 		sprintf(stbuff, __VA_ARGS__);                                                                                  \
-		ctx->notefunction(ctx, stbuff);                                                                                \
+		SV_LOG_NULL_GUARD ctx->notefunction(ctx, stbuff);                                                              \
 	}
 #define SV_ERROR(...)                                                                                                  \
 	{                                                                                                                  \
 		char stbuff[1024];                                                                                             \
 		sprintf(stbuff, __VA_ARGS__);                                                                                  \
-		ctx->faultfunction(ctx, stbuff);                                                                               \
+		SV_LOG_NULL_GUARD ctx->faultfunction(ctx, stbuff);                                                             \
 	}
 #define SV_KILL() exit(0) // XXX This should likely be re-defined.
 
