@@ -1532,17 +1532,21 @@ void survive_data_cb(SurviveUSBInterface *si) {
 	}
 	case USB_IF_HMD_LIGHTCAP:
 	case USB_IF_TRACKER1_LIGHTCAP: {
-		int i;
-		for (i = 0; i < 9; i++) {
-			LightcapElement le;
-			le.sensor_id = POP1;
-			le.length = POP2;
-			le.timestamp = POP4;
-			if (le.sensor_id > 0xfd)
-				continue;
-			// SV_INFO("%d %d %d %d %d", id, le.sensor_id, le.length, le.timestamp, si->buffer + size - readdata);
-			handle_lightcap(obj, &le);
+		uint32_t timestamp = *((uint32_t*)(&readdata[1+13*4+6]));
+		printf("[%10u] ", timestamp);
+		for (size_t i = 0; i < 4; i++) {
+			uint32_t sid =  (readdata[13*i] & 0x7F);
+			uint32_t type = (readdata[13*i] & 0x80 ? 1 : 0);
+			uint32_t sweeptime = *((uint32_t*)(&readdata[1 + 13*i]));
+			uint32_t t1 = *((uint32_t*)(&readdata[1 + 13*i + 4]));
+			uint32_t t2 = *((uint32_t*)(&readdata[1 + 13*i + 8]));
+			printf("[%1u:%2d] (%10u) %10u %10u", type, (sid < 22 ? sid : -1), sweeptime, t1, t2);
 		}
+		uint32_t synctime = *((uint32_t*)(&readdata[1+13*4]));
+		printf("[%10u] ", synctime);
+		for (int j = 4; j < 13; j++)
+			printf("%02x ", readdata[1+13*4 + j]);
+		printf("\n");
 		break;
 	}
 	case USB_IF_W_WATCHMAN1_LIGHTCAP:
